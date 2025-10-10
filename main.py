@@ -665,22 +665,14 @@ def evaluate_gradient_boosting(df: pd.DataFrame, regions: Sequence[str]) -> floa
         ]
     )
 
-    # default (full) param grid
-    param_grid = {
-        "regressor__n_estimators": [500, 800, 1000],
-        "regressor__learning_rate": [0.01, 0.03, 0.05],
-        "regressor__max_depth": [5, 6, 7],
-        "regressor__subsample": [0.8, 0.9],
-    }
 
-    # if a 'quick' marker is attached to df.attrs, use a smaller grid for fast iteration
-    if df.attrs.get("quick_run"):
-        param_grid = {
-            "regressor__n_estimators": [200, 400],
-            "regressor__learning_rate": [0.03],
-            "regressor__max_depth": [5],
-            "regressor__subsample": [0.9],
-        }
+
+    param_grid = {
+        "regressor__n_estimators": [200, 400],
+        "regressor__learning_rate": [0.03],
+        "regressor__max_depth": [5],
+        "regressor__subsample": [0.9],
+    }
 
     splitter = SpatialTemporalSplitter(
         regions=regions,
@@ -689,9 +681,8 @@ def evaluate_gradient_boosting(df: pd.DataFrame, regions: Sequence[str]) -> floa
         recent_year_threshold=2018,
     )
 
-    n_jobs = -1
-    if df.attrs.get("quick_run"):
-        n_jobs = 1
+
+    n_jobs = 1
 
     grid_search = GridSearchCV(
         pipeline,
@@ -724,10 +715,8 @@ def main() -> None:
         raise SystemExit("Usage: python main.py <path_to_dataset>")
 
     dataset_path = sys.argv[1]
-    quick = "--quick" in sys.argv
     df = prepare_dataframe(dataset_path)
-    if quick:
-        df.attrs["quick_run"] = True
+
 
     region_order = tuple(df["Region"].dropna().unique())
 
@@ -749,11 +738,9 @@ def main() -> None:
         "Deprecijacioni_indeks",
     ]
 
-    tt_epochs = 30 if quick else 80
-    tt_batch = 32 if quick else 64
+    tt_epochs = 30
+    tt_batch = 32
     tt_df = df[cat_cols + num_cols + ["Log_Cena"]].copy()
-    if quick:
-        tt_df.attrs["quick_run"] = True
 
     tab_transformer_rmse = fit_tab_transformer(tt_df, cat_cols, num_cols, "Log_Cena", splitter, epochs=tt_epochs, batch_size=tt_batch)
 
