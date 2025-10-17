@@ -316,13 +316,13 @@ class TabularDataset(Dataset):
         df: pd.DataFrame,
         cat_cols: Sequence[str],
         num_cols: Sequence[str],
-        target: pd.Series,
         cat_mappings: Dict[str, Dict[str, int]],
+        target_values: np.ndarray,
     ):
         self.cat_cols = list(cat_cols)
         self.num_cols = list(num_cols)
         self.cat_mappings = cat_mappings
-        self.target = target.values.astype(np.float32)
+        self.target = target_values.astype(np.float32)
 
         cat_arrays = []
         for col in self.cat_cols:
@@ -444,8 +444,16 @@ def fit_tab_transformer(
 
         cat_mappings = create_cat_mappings(train_df, cat_cols)
 
-        train_dataset = TabularDataset(train_scaled, cat_cols, num_cols, train_scaled[target_col], cat_mappings)
-        val_dataset = TabularDataset(val_scaled, cat_cols, num_cols, val_scaled[target_col], cat_mappings)
+        target_mean = float(train_df[target_col].mean())
+        target_std = float(train_df[target_col].std())
+        if np.isnan(target_std) or target_std == 0:
+            target_std = 1.0
+
+        train_targets = ((train_df[target_col].to_numpy() - target_mean) / target_std).astype(np.float32)
+        val_targets = ((val_df[target_col].to_numpy() - target_mean) / target_std).astype(np.float32)
+
+        train_dataset = TabularDataset(train_scaled, cat_cols, num_cols, cat_mappings, train_targets)
+        val_dataset = TabularDataset(val_scaled, cat_cols, num_cols, cat_mappings, val_targets)
 
         cat_cardinalities = [len(cat_mappings[col]) - 1 for col in cat_cols]
         model = TabTransformer(cat_cardinalities, len(num_cols)).to(device)
@@ -509,6 +517,8 @@ def fit_tab_transformer(
 
         preds_arr = np.array(preds_list)
         targets_arr = np.array(targets_list)
+        preds_arr = preds_arr * target_std + target_mean
+        targets_arr = targets_arr * target_std + target_mean
         rmse = math.sqrt(mean_squared_error(np.expm1(targets_arr), np.expm1(preds_arr)))
         rmses.append(rmse)
 
@@ -567,9 +577,9 @@ def remove_outliers_isolation_forest(df: pd.DataFrame, features: Sequence[str], 
 
 
 def loess_soft_clip(df: pd.DataFrame, feature: str, reference: str, frac: float = 0.3, clip_sigma: float = 2.5) -> None:
-    # ensure numeric
-    df[feature] = pd.to_numeric(df[feature], errors="coerce")
-    df[reference] = pd.to_numeric(df[reference], errors="coerce")
+    # ensure numeric float dtype
+    df[feature] = pd.to_numeric(df[feature], errors="coerce").astype(float)
+    df[reference] = pd.to_numeric(df[reference], errors="coerce").astype(float)
     valid = df[[feature, reference]].dropna()
     if valid.empty:
         return
@@ -739,7 +749,13 @@ def main() -> None:
         "Deprecijacioni_indeks",
     ]
 
-    tab_transformer_rmse = fit_tab_transformer(df[cat_cols + num_cols + ["Log_Cena"]], cat_cols, num_cols, "Log_Cena", splitter, epochs=4, batch_size=32)
+    tt_epochs = 30 if quick else 80
+    tt_batch = 32 if quick else 64
+    tt_df = df[cat_cols + num_cols + ["Log_Cena"]].copy()
+    if quick:
+        tt_df.attrs["quick_run"] = True
+
+    tab_transformer_rmse = fit_tab_transformer(tt_df, cat_cols, num_cols, "Log_Cena", splitter, epochs=tt_epochs, batch_size=tt_batch)
 
     print(f"GradientBoostingRegressor RMSE: {gbr_rmse:.2f}")
     print(f"TabTransformer RMSE: {tab_transformer_rmse:.2f}")
